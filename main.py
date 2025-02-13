@@ -39,7 +39,6 @@ import seaborn as sns
 import argparse
 import matplotlib.gridspec as gridspec
 import __main__ as main
-import json
 
 
 # In[ ]:
@@ -632,25 +631,6 @@ with open(filepath +architecture+'.tflite', 'wb') as f:
 
 
 print("Training Done!")
-
-
-# In[ ]:
-
-
-# 计算预处理参数
-preprocessing_params = {
-    'mean_acc': float(np.mean(centralTrainData[:,:,:3])),
-    'std_acc': float(np.std(centralTrainData[:,:,:3])),
-    'mean_gyro': float(np.mean(centralTrainData[:,:,3:])),
-    'std_gyro': float(np.std(centralTrainData[:,:,3:]))
-}
-
-# 保存预处理参数
-params_path = os.path.join(filepath, 'preprocessing_params_motionsense.json')
-with open(params_path, 'w', encoding='utf-8') as f:
-    json.dump(preprocessing_params, f, indent=2)
-
-print(f"Preprocessing parameters saved to {params_path}")
 
 
 # In[ ]:
