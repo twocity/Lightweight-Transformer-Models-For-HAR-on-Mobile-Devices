@@ -39,6 +39,7 @@ import seaborn as sns
 import argparse
 import matplotlib.gridspec as gridspec
 import __main__ as main
+import json
 
 
 # In[ ]:
@@ -301,6 +302,54 @@ else:
     clientOrientationTrain = datasetLoader.clientOrientationTrain 
     clientOrientationTest = datasetLoader.clientOrientationTest 
     orientationsNames = datasetLoader.orientationsNames 
+
+
+# In[ ]:
+
+
+# Calculate and save preprocessing parameters
+try:
+    print("\nCalculating preprocessing parameters...")
+    # 计算统计值
+    accMean = np.mean(centralTrainData[:,:,0:3])
+    accStd = np.std(centralTrainData[:,:,0:3])
+    gyroMean = np.mean(centralTrainData[:,:,3:6])
+    gyroStd = np.std(centralTrainData[:,:,3:6])
+
+    # 准备参数
+    preprocessing_params = {
+        'dataset': dataSetName,
+        'parameters': {
+            'mean_acc': float(accMean),
+            'std_acc': float(accStd),
+            'mean_gyro': float(gyroMean),
+            'std_gyro': float(gyroStd)
+        },
+        'shape': {
+            'window_size': segment_size,
+            'num_channels': num_input_channels
+        }
+    }
+
+    # 确保目录存在
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    
+    # 保存参数
+    params_path = os.path.join(filepath, f'preprocessing_params_{dataSetName.lower()}.json')
+    with open(params_path, 'w', encoding='utf-8') as f:
+        json.dump(preprocessing_params, f, indent=2, ensure_ascii=False)
+    
+    print(f"Preprocessing parameters saved to {params_path}")
+    print(f"Parameters: {json.dumps(preprocessing_params, indent=2)}")
+
+    # 使用这些参数标准化训练数据
+    print("Normalizing training data...")
+    centralTrainData[:,:,0:3] = (centralTrainData[:,:,0:3] - accMean) / accStd
+    centralTrainData[:,:,3:6] = (centralTrainData[:,:,3:6] - gyroMean) / gyroStd
+
+except Exception as e:
+    print(f"Error in preprocessing: {e}")
+    raise
 
 
 # In[ ]:
@@ -627,14 +676,8 @@ with open(filepath +architecture+'.tflite', 'wb') as f:
     f.write(tflite_model)
 
 
+
 # In[ ]:
 
 
 print("Training Done!")
-
-
-# In[ ]:
-
-
-
-

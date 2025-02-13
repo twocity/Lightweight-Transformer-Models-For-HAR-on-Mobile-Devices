@@ -1,0 +1,13 @@
+{
+  "dataset": "UCI",
+  "parameters": {
+    "mean_acc": 0.0032168606393871675,
+    "std_acc": 0.9988180794139522,
+    "mean_gyro": 0.0023726135233533363,
+    "std_gyro": 1.0160260933806755
+  },
+  "shape": {
+    "window_size": 128,
+    "num_channels": 6
+  }
+}
