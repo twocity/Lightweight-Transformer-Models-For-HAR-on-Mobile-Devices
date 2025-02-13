@@ -20,7 +20,12 @@ class HARInference(
     private val callback: HARCallback
 ) {
     private var interpreter: Interpreter? = null
-    private var preprocessParams: PreprocessParams? = null
+    private val preprocessParams = PreprocessParams(
+        meanAcc = 0.0f,
+        stdAcc = 9.81f,
+        meanGyro = 0.0f,
+        stdGyro = 3.14f
+    )
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val windowSize = 128 // 从训练代码 DEFAULT_CONFIG 中的 segment_size
     private val numChannels = 6  // 从训练代码 DEFAULT_CONFIG 中的 num_channels
@@ -66,7 +71,6 @@ class HARInference(
     fun start() {
         try {
             loadModel()
-            loadPreprocessParams()
             initializeSensors()
         } catch (e: Exception) {
             Log.d("HARInference", "Initialization failed: ${e.message}", e)
@@ -76,39 +80,20 @@ class HARInference(
 
     private fun loadModel() {
         try {
-            context.assets.open("har/mobile_hart_motionsense.tflite").use { fileInputStream ->
+            context.assets.open("har/MobileHART.tflite").use { fileInputStream ->
                 val modelBuffer = ByteBuffer.allocateDirect(fileInputStream.available())
                     .order(ByteOrder.nativeOrder())
 
-                // Read bytes into the ByteBuffer
                 val bytes = ByteArray(fileInputStream.available())
                 fileInputStream.read(bytes)
                 modelBuffer.put(bytes)
-                modelBuffer.rewind()  // Reset position to beginning
+                modelBuffer.rewind()
 
                 val options = Interpreter.Options()
                 interpreter = Interpreter(modelBuffer, options)
             }
         } catch (e: Exception) {
             throw RuntimeException("Error loading model: ${e.message}")
-        }
-    }
-
-    private fun loadPreprocessParams() {
-        try {
-            context.assets.open("har/preprocessing_params_motionsense.json").use { inputStream ->
-                val jsonString = inputStream.bufferedReader().use { it.readText() }
-                val jsonObject = JSONObject(jsonString)
-
-                preprocessParams = PreprocessParams(
-                    meanAcc = jsonObject.getDouble("mean_acc").toFloat(),
-                    stdAcc = jsonObject.getDouble("std_acc").toFloat(),
-                    meanGyro = jsonObject.getDouble("mean_gyro").toFloat(),
-                    stdGyro = jsonObject.getDouble("std_gyro").toFloat()
-                )
-            }
-        } catch (e: Exception) {
-            throw RuntimeException("Error loading preprocessing parameters: ${e.message}", e.cause)
         }
     }
 
@@ -143,36 +128,39 @@ class HARInference(
     }
 
     private fun preprocessSensorData(): FloatArray {
-        val params = preprocessParams ?: throw RuntimeException("Preprocessing parameters not loaded")
         val processedData = FloatArray(windowSize * numChannels)
 
         for (i in 0 until windowSize) {
             val accValues = accData[i]
             val gyroValues = gyroData[i]
 
-            // Process accelerometer data (first 3 channels)
+            // 与训练时相同的预处理逻辑
             for (j in 0..2) {
-                processedData[i * numChannels + j] = (accValues[j] - params.meanAcc) / params.stdAcc
+                // 加速度数据 (前3个通道)
+                processedData[i * numChannels + j] = (accValues[j] - preprocessParams.meanAcc) / preprocessParams.stdAcc
             }
-            
-            // Process gyroscope data (last 3 channels)
             for (j in 0..2) {
-                processedData[i * numChannels + j + 3] = (gyroValues[j] - params.meanGyro) / params.stdGyro
+                // 陀螺仪数据 (后3个通道)
+                processedData[i * numChannels + j + 3] = (gyroValues[j] - preprocessParams.meanGyro) / preprocessParams.stdGyro
             }
         }
         return processedData
     }
 
     private fun runInference(input: FloatArray): FloatArray {
+        // 准备输入 tensor
         val inputBuffer = ByteBuffer.allocateDirect(windowSize * numChannels * 4)
             .order(ByteOrder.nativeOrder())
         input.forEach { inputBuffer.putFloat(it) }
 
-        val outputBuffer = ByteBuffer.allocateDirect(6 * 4)  // 6 classes
+        // 准备输出 tensor (6个活动类别)
+        val outputBuffer = ByteBuffer.allocateDirect(6 * 4)
             .order(ByteOrder.nativeOrder())
 
+        // 运行推理
         interpreter?.run(inputBuffer, outputBuffer)
 
+        // 解析输出
         val output = FloatArray(6)
         outputBuffer.rewind()
         for (i in output.indices) {
@@ -182,8 +170,11 @@ class HARInference(
     }
 
     private fun interpretResult(output: FloatArray): Pair<String, Float> {
-        val activities =
-            arrayOf("Downstairs", "Upstairs", "Sitting", "Standing", "Walking", "Jogging")
+        // 与训练时相同的活动标签顺序
+        val activities = arrayOf(
+            "Downstairs", "Upstairs", "Sitting", 
+            "Standing", "Walking", "Jogging"
+        )
         val maxIndex = output.indices.maxByOrNull { output[it] } ?: 0
         return Pair(activities[maxIndex], output[maxIndex])
     }
