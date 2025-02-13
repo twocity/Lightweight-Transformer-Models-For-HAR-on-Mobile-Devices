@@ -1,9 +1,0 @@
-tensorflow-macos
-tensorflow-metal
-numpy
-pandas
-scikit-learn
-matplotlib
-seaborn
-hickle 
-requests
