@@ -148,6 +148,54 @@ def add_fit_args(parser):
     args = parser.parse_args()
     return args
 
+def save_dataset_params(data, dataset_name, save_path):
+    """
+    Save dataset parameters for reference
+    
+    Args:
+        data: standardized data array
+        dataset_name: name of the dataset
+        save_path: path to save the parameters
+    """
+    try:
+        print("\nSaving dataset parameters...")
+        # Calculate statistics from standardized data
+        acc_stats = {
+            'x': {'mean': float(np.mean(data[:,:,0])), 'std': float(np.std(data[:,:,0]))},
+            'y': {'mean': float(np.mean(data[:,:,1])), 'std': float(np.std(data[:,:,1]))},
+            'z': {'mean': float(np.mean(data[:,:,2])), 'std': float(np.std(data[:,:,2]))}
+        }
+        
+        gyro_stats = {
+            'x': {'mean': float(np.mean(data[:,:,3])), 'std': float(np.std(data[:,:,3]))},
+            'y': {'mean': float(np.mean(data[:,:,4])), 'std': float(np.std(data[:,:,4]))},
+            'z': {'mean': float(np.mean(data[:,:,5])), 'std': float(np.std(data[:,:,5]))}
+        }
+
+        params = {
+            'dataset': dataset_name,
+            'sensors': {
+                'acceleration': acc_stats,
+                'gyroscope': gyro_stats
+            },
+            'metadata': {
+                'window_size': segment_size,
+                'channels': num_input_channels,
+                'saved_at': time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+        }
+
+        # Save parameters
+        params_path = os.path.join(save_path, f'dataset_params_{dataset_name.lower()}.json')
+        with open(params_path, 'w', encoding='utf-8') as f:
+            json.dump(params, f, indent=2, ensure_ascii=False)
+        
+        print(f"Dataset parameters saved to {params_path}")
+
+    except Exception as e:
+        print(f"Error saving dataset parameters: {e}")
+        raise
+
 
 # In[ ]:
 
@@ -635,51 +683,3 @@ with open(filepath +architecture+'.tflite', 'wb') as f:
 
 
 print("Training Done!")
-
-def save_dataset_params(data, dataset_name, save_path):
-    """
-    Save dataset parameters for reference
-    
-    Args:
-        data: standardized data array
-        dataset_name: name of the dataset
-        save_path: path to save the parameters
-    """
-    try:
-        print("\nSaving dataset parameters...")
-        # Calculate statistics from standardized data
-        acc_stats = {
-            'x': {'mean': float(np.mean(data[:,:,0])), 'std': float(np.std(data[:,:,0]))},
-            'y': {'mean': float(np.mean(data[:,:,1])), 'std': float(np.std(data[:,:,1]))},
-            'z': {'mean': float(np.mean(data[:,:,2])), 'std': float(np.std(data[:,:,2]))}
-        }
-        
-        gyro_stats = {
-            'x': {'mean': float(np.mean(data[:,:,3])), 'std': float(np.std(data[:,:,3]))},
-            'y': {'mean': float(np.mean(data[:,:,4])), 'std': float(np.std(data[:,:,4]))},
-            'z': {'mean': float(np.mean(data[:,:,5])), 'std': float(np.std(data[:,:,5]))}
-        }
-
-        params = {
-            'dataset': dataset_name,
-            'sensors': {
-                'acceleration': acc_stats,
-                'gyroscope': gyro_stats
-            },
-            'metadata': {
-                'window_size': segment_size,
-                'channels': num_input_channels,
-                'saved_at': time.strftime("%Y-%m-%d %H:%M:%S")
-            }
-        }
-
-        # Save parameters
-        params_path = os.path.join(save_path, f'dataset_params_{dataset_name.lower()}.json')
-        with open(params_path, 'w', encoding='utf-8') as f:
-            json.dump(params, f, indent=2, ensure_ascii=False)
-        
-        print(f"Dataset parameters saved to {params_path}")
-
-    except Exception as e:
-        print(f"Error saving dataset parameters: {e}")
-        raise
