@@ -295,74 +295,15 @@ else:
     datasetLoader = utils.loadDataset(dataSetName,clientCount,dataConfig,randomSeed,mainDir+'datasets/')
     centralTrainData = datasetLoader.centralTrainData 
     centralTrainLabel = datasetLoader.centralTrainLabel 
-
     centralTestData = datasetLoader.centralTestData 
     centralTestLabel = datasetLoader.centralTestLabel 
+
+    # Save dataset parameters for reference
+    save_dataset_params(centralTrainData, dataSetName, filepath)
 
     clientOrientationTrain = datasetLoader.clientOrientationTrain 
     clientOrientationTest = datasetLoader.clientOrientationTest 
     orientationsNames = datasetLoader.orientationsNames 
-
-
-# In[ ]:
-
-
-# Calculate and save preprocessing parameters
-try:
-    print("\nCalculating preprocessing parameters...")
-    # 计算每个传感器轴的独立参数
-    acc_mean = np.mean(centralTrainData[:,:,0:3], axis=(0,1))  # 形状 (3,)
-    acc_std = np.std(centralTrainData[:,:,0:3], axis=(0,1))
-    gyro_mean = np.mean(centralTrainData[:,:,3:6], axis=(0,1))
-    gyro_std = np.std(centralTrainData[:,:,3:6], axis=(0,1))
-
-    # 添加数值稳定性保护
-    acc_std = np.where(acc_std < 1e-7, 1.0, acc_std)
-    gyro_std = np.where(gyro_std < 1e-7, 1.0, gyro_std)
-
-    # 准备参数
-    preprocessing_params = {
-        'dataset': dataSetName,
-        'sensors': {
-            'acceleration': {
-                'x': {'mean': float(acc_mean[0]), 'std': float(acc_std[0])},
-                'y': {'mean': float(acc_mean[1]), 'std': float(acc_std[1])},
-                'z': {'mean': float(acc_mean[2]), 'std': float(acc_std[2])}
-            },
-            'gyroscope': {
-                'x': {'mean': float(gyro_mean[0]), 'std': float(gyro_std[0])},
-                'y': {'mean': float(gyro_mean[1]), 'std': float(gyro_std[1])},
-                'z': {'mean': float(gyro_mean[2]), 'std': float(gyro_std[2])}
-            }
-        },
-        'metadata': {
-            'window_size': segment_size,
-            'channels': num_input_channels,
-            'calculated_at': time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-    }
-
-    # 确保目录存在
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    
-    # 保存参数
-    params_path = os.path.join(filepath, f'preprocessing_params_{dataSetName.lower()}.json')
-    with open(params_path, 'w', encoding='utf-8') as f:
-        json.dump(preprocessing_params, f, indent=2, ensure_ascii=False)
-    
-    print(f"Preprocessing parameters saved to {params_path}")
-    print(f"Parameters: {json.dumps(preprocessing_params, indent=2)}")
-
-    # 使用这些参数标准化训练数据
-    print("Normalizing training data...")
-    for i in range(3):
-        centralTrainData[:,:,i] = (centralTrainData[:,:,i] - acc_mean[i]) / acc_std[i]
-    for i in range(3,6):
-        centralTrainData[:,:,i] = (centralTrainData[:,:,i] - gyro_mean[i-3]) / gyro_std[i-3]
-
-except Exception as e:
-    print(f"Error in preprocessing: {e}")
-    raise
 
 
 # In[ ]:
@@ -694,3 +635,51 @@ with open(filepath +architecture+'.tflite', 'wb') as f:
 
 
 print("Training Done!")
+
+def save_dataset_params(data, dataset_name, save_path):
+    """
+    Save dataset parameters for reference
+    
+    Args:
+        data: standardized data array
+        dataset_name: name of the dataset
+        save_path: path to save the parameters
+    """
+    try:
+        print("\nSaving dataset parameters...")
+        # Calculate statistics from standardized data
+        acc_stats = {
+            'x': {'mean': float(np.mean(data[:,:,0])), 'std': float(np.std(data[:,:,0]))},
+            'y': {'mean': float(np.mean(data[:,:,1])), 'std': float(np.std(data[:,:,1]))},
+            'z': {'mean': float(np.mean(data[:,:,2])), 'std': float(np.std(data[:,:,2]))}
+        }
+        
+        gyro_stats = {
+            'x': {'mean': float(np.mean(data[:,:,3])), 'std': float(np.std(data[:,:,3]))},
+            'y': {'mean': float(np.mean(data[:,:,4])), 'std': float(np.std(data[:,:,4]))},
+            'z': {'mean': float(np.mean(data[:,:,5])), 'std': float(np.std(data[:,:,5]))}
+        }
+
+        params = {
+            'dataset': dataset_name,
+            'sensors': {
+                'acceleration': acc_stats,
+                'gyroscope': gyro_stats
+            },
+            'metadata': {
+                'window_size': segment_size,
+                'channels': num_input_channels,
+                'saved_at': time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+        }
+
+        # Save parameters
+        params_path = os.path.join(save_path, f'dataset_params_{dataset_name.lower()}.json')
+        with open(params_path, 'w', encoding='utf-8') as f:
+            json.dump(params, f, indent=2, ensure_ascii=False)
+        
+        print(f"Dataset parameters saved to {params_path}")
+
+    except Exception as e:
+        print(f"Error saving dataset parameters: {e}")
+        raise
