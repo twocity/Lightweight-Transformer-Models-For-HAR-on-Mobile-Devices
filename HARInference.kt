@@ -12,6 +12,7 @@ import java.nio.MappedByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 import java.util.ArrayDeque
+import kotlin.math.abs
 
 /**
  * HARInference:
@@ -29,11 +30,7 @@ class HARInference(
     private val dataSetName: String = "UCI",      // 默认数据集
     private val desiredSamplingRate: Int = 50,    // 目标采样率(Hz)
     private val windowSize: Int = 128,            // 窗口大小
-    private val slideStep: Int = 64,               // 窗口滑动步长，可用于后续扩展
-    private val bufferOverlap: Float = 0.5f,  // 添加重叠率参数
-    private val smoothWindowSize: Int = 5,  // 平滑窗口大小
-    private val confidenceThreshold: Float = 0.8f,  // 置信度阈值
-    private val minTimeBetweenInferences: Long = 1000  // 最小推理间隔(毫秒)
+    private val resampleConfig: ResampleConfig = ResampleConfig.default(windowSize)  // 重采样配置
 ) : SensorEventListener {
 
     companion object {
@@ -71,11 +68,11 @@ class HARInference(
         // =========================== 文件名映射 ===========================
         fun getModelFileName(dsName: String): String {
             // 也可根据 dsName 返回不同 tflite
-            return "har/MobileHART.tflite"
+            return "har/${dsName.lowercase()}/MobileHART.tflite"
         }
 
         fun getPreprocessingParamsFileName(dsName: String): String {
-            return "har/preprocessing_params_${dsName.lowercase()}.json"
+            return "har/${dsName.lowercase()}/preprocessing_params.json"
         }
     }
 
@@ -126,10 +123,18 @@ class HARInference(
     private var tfliteInterpreter: Interpreter? = null
 
     // 标准化参数: 用于 (x - mean) / std
-    private var accMean: Float = 0f
-    private var accStd: Float = 1f
-    private var gyroMean: Float = 0f
-    private var gyroStd: Float = 1f
+    private var accMeanX: Float = 0f
+    private var accStdX: Float = 1f
+    private var accMeanY: Float = 0f
+    private var accStdY: Float = 1f
+    private var accMeanZ: Float = 0f
+    private var accStdZ: Float = 1f
+    private var gyroMeanX: Float = 0f
+    private var gyroStdX: Float = 1f
+    private var gyroMeanY: Float = 0f
+    private var gyroStdY: Float = 1f
+    private var gyroMeanZ: Float = 0f
+    private var gyroStdZ: Float = 1f
 
     // 时间戳参考
     private var lastAccTimestampNs: Long = -1L
@@ -138,8 +143,46 @@ class HARInference(
     private var activityLabels: Array<String> = getActivityLabelsByDataSet(dataSetName)
 
     // 添加成员变量
-    private val recentPredictions = ArrayDeque<Pair<String, Float>>(smoothWindowSize)
+    private val recentPredictions = ArrayDeque<Pair<String, Float>>(resampleConfig.smoothWindowSize)
     private var lastInferenceTime = 0L
+
+    // 内部重采样配置类
+    class ResampleConfig private constructor(
+        val minSamples: Int,           // 最少需要的样本数
+        val bufferOverlap: Float,      // 缓冲区重叠率
+        val smoothWindowSize: Int,     // 平滑窗口大小
+        val confidenceThreshold: Float, // 置信度阈值
+        val minInferenceInterval: Long // 最小推理间隔(毫秒)
+    ) {
+        companion object {
+            // 默认配置
+            fun default(windowSize: Int) = ResampleConfig(
+                minSamples = windowSize,
+                bufferOverlap = 0.5f,
+                smoothWindowSize = 5,
+                confidenceThreshold = 0.6f,
+                minInferenceInterval = 1000L
+            )
+
+            // 高性能配置 - 更快的响应
+            fun highPerformance(windowSize: Int) = ResampleConfig(
+                minSamples = windowSize,
+                bufferOverlap = 0.25f,
+                smoothWindowSize = 3,
+                confidenceThreshold = 0.7f,
+                minInferenceInterval = 500L
+            )
+
+            // 高精度配置 - 更稳定的结果
+            fun highAccuracy(windowSize: Int) = ResampleConfig(
+                minSamples = windowSize,
+                bufferOverlap = 0.75f,
+                smoothWindowSize = 7,
+                confidenceThreshold = 0.9f,
+                minInferenceInterval = 2000L
+            )
+        }
+    }
 
     /**
      * 启动：加载模型 + 注册传感器
@@ -208,12 +251,19 @@ class HARInference(
         synchronized(bufferLock) {
             when (sensorType) {
                 Sensor.TYPE_ACCELEROMETER -> {
-                    if (lastAccTimestampNs < 0) lastAccTimestampNs = timestampNs
+                    if (timestampNs <= lastAccTimestampNs) {
+                        Log.w(TAG, "Received out-of-order acc data: $timestampNs <= $lastAccTimestampNs")
+                        return@synchronized
+                    }
+                    lastAccTimestampNs = timestampNs
                     accBuffer.add(AccData(timestampNs, x, y, z))
-
                 }
                 Sensor.TYPE_GYROSCOPE -> {
-                    if (lastGyroTimestampNs < 0) lastGyroTimestampNs = timestampNs
+                    if (timestampNs <= lastGyroTimestampNs) {
+                        Log.w(TAG, "Received out-of-order gyro data: $timestampNs <= $lastGyroTimestampNs")
+                        return@synchronized
+                    }
+                    lastGyroTimestampNs = timestampNs
                     gyroBuffer.add(GyroData(timestampNs, x, y, z))
                 }
             }
@@ -236,9 +286,9 @@ class HARInference(
         synchronized(bufferLock) {
             localAcc = accBuffer.toList()
             localGyro = gyroBuffer.toList()
-            
-            // 1. 保留部分数据而不是全部清空
-            val keepSize = (windowSize * bufferOverlap).toInt()
+
+            // 使用配置的重叠率
+            val keepSize = (windowSize * resampleConfig.bufferOverlap).toInt()
             if (accBuffer.size > keepSize) {
                 accBuffer.subList(0, accBuffer.size - keepSize).clear()
             }
@@ -247,78 +297,46 @@ class HARInference(
             }
         }
 
-        // 2. 修改时间跨度计算
-        val minSamples = windowSize  // 最少需要这么多采样点
-        if (localAcc.size < minSamples || localGyro.size < minSamples) {
-            Log.d(TAG, "Not enough samples: acc=${localAcc.size}, gyro=${localGyro.size}, required=$minSamples")
+        // 使用配置的最小样本数
+        if (localAcc.size < resampleConfig.minSamples || localGyro.size < resampleConfig.minSamples) {
+            Log.d(TAG, "Not enough samples: acc=${localAcc.size}, gyro=${localGyro.size}, required=${resampleConfig.minSamples}")
             return
         }
 
-        // 3. 重采样
-        val resampledAcc = reSampleAccData(localAcc, desiredSamplingRate)
-        val resampledGyro = reSampleGyroData(localGyro, desiredSamplingRate)
-
-        // 4. 检查重采样结果
-        if (resampledAcc.size < windowSize || resampledGyro.size < windowSize) {
-            Log.d(TAG, "Insufficient resampled data: acc=${resampledAcc.size}, gyro=${resampledGyro.size}, window=$windowSize")
-            return
-        }
-
-        // 合并到同一时间轴
-        val combinedList = combineResampledData(resampledAcc, resampledGyro)
-        if (combinedList.size < windowSize) {
-            return
-        }
-
-        // 取末端 windowSize 个点
-        val finalSegment = combinedList.takeLast(windowSize)
-
-        // 构建输入 [1, windowSize, 6]
-        val inputArray = FloatArray(windowSize * 6)
-
-        for (i in finalSegment.indices) {
-            val d = finalSegment[i]
-            val idx = i * 6
-            // 归一化
-            inputArray[idx]   = (d.accX   - accMean)  / if (accStd == 0f) 1f else accStd
-            inputArray[idx+1] = (d.accY   - accMean)  / if (accStd == 0f) 1f else accStd
-            inputArray[idx+2] = (d.accZ   - accMean)  / if (accStd == 0f) 1f else accStd
-            inputArray[idx+3] = (d.gyroX  - gyroMean) / if (gyroStd == 0f) 1f else gyroStd
-            inputArray[idx+4] = (d.gyroY  - gyroMean) / if (gyroStd == 0f) 1f else gyroStd
-            inputArray[idx+5] = (d.gyroZ  - gyroMean) / if (gyroStd == 0f) 1f else gyroStd
-        }
-
-        val modelInput = Array(1) { Array(windowSize) { FloatArray(6) } }
-        for (i in 0 until windowSize) {
-            for (j in 0 until 6) {
-                modelInput[0][i][j] = inputArray[i * 6 + j]
-            }
-        }
-
-        val outputSize = activityLabels.size
-        val outputBuffer = Array(1) { FloatArray(outputSize) }
-
-        val interpreter = tfliteInterpreter
-        if (interpreter == null) {
-            callback.onError("Interpreter not initialized.")
-            return
-        }
-
-        // 检查时间间隔
+        // 检查推理间隔
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastInferenceTime < minTimeBetweenInferences) {
+        if (currentTime - lastInferenceTime < resampleConfig.minInferenceInterval) {
             return
         }
 
         try {
-            // 1. 执行模型推理
-            val prediction = runModelInference(finalSegment)
-                ?: return // 如果推理结果无效或置信度低，直接返回
+            // 1. 重采样
+            val resampledAcc = reSampleAccData(localAcc, desiredSamplingRate)
+            val resampledGyro = reSampleGyroData(localGyro, desiredSamplingRate)
 
-            // 2. 平滑处理并输出结果
+            // 2. 检查重采样结果
+            if (resampledAcc.size < windowSize || resampledGyro.size < windowSize) {
+                Log.d(TAG, "Insufficient resampled data: acc=${resampledAcc.size}, gyro=${resampledGyro.size}, window=$windowSize")
+                return
+            }
+
+            // 3. 合并到同一时间轴
+            val combinedList = combineResampledData(resampledAcc, resampledGyro)
+            if (combinedList.size < windowSize) {
+                return
+            }
+
+            // 4. 取末端 windowSize 个点
+            val finalSegment = combinedList.takeLast(windowSize)
+
+            // 5. 执行推理
+            val prediction = runModelInference(finalSegment)
+                ?: return
+
+            // 6. 平滑处理
             processPredictionWithSmoothing(prediction)
-            
             lastInferenceTime = currentTime
+
         } catch (e: Exception) {
             Log.e(TAG, "Inference error:", e)
             callback.onError(e.message ?: "Unknown error")
@@ -338,21 +356,21 @@ class HARInference(
 
         // 1. 准备输入数据 [1, windowSize, 6]
         val modelInput = Array(1) { Array(windowSize) { FloatArray(6) } }
-        
+
         // 2. 填充并标准化数据
         for (i in finalSegment.indices) {
             val data = finalSegment[i]
-            modelInput[0][i][0] = (data.accX - accMean) / accStd
-            modelInput[0][i][1] = (data.accY - accMean) / accStd
-            modelInput[0][i][2] = (data.accZ - accMean) / accStd
-            modelInput[0][i][3] = (data.gyroX - gyroMean) / gyroStd
-            modelInput[0][i][4] = (data.gyroY - gyroMean) / gyroStd
-            modelInput[0][i][5] = (data.gyroZ - gyroMean) / gyroStd
+            modelInput[0][i][0] = (data.accX - accMeanX) / accStdX
+            modelInput[0][i][1] = (data.accY - accMeanY) / accStdY
+            modelInput[0][i][2] = (data.accZ - accMeanZ) / accStdZ
+            modelInput[0][i][3] = (data.gyroX - gyroMeanX) / gyroStdX
+            modelInput[0][i][4] = (data.gyroY - gyroMeanY) / gyroStdY
+            modelInput[0][i][5] = (data.gyroZ - gyroMeanZ) / gyroStdZ
         }
 
         // 3. 准备输出缓冲区
         val outputBuffer = Array(1) { FloatArray(activityLabels.size) }
-        
+
         // 4. 执行推理
         tfliteInterpreter?.run(modelInput, outputBuffer)
             ?: return null
@@ -366,10 +384,10 @@ class HARInference(
                 maxIdx = i
             }
         }
-        
+
         // 6. 检查置信度阈值
-        if (maxVal < confidenceThreshold) {
-            Log.d(TAG, "Confidence too low: $maxVal < $confidenceThreshold")
+        if (maxVal < resampleConfig.confidenceThreshold) {
+            Log.d(TAG, "Confidence too low: $maxVal < ${resampleConfig.confidenceThreshold}")
             return null
         }
 
@@ -383,24 +401,23 @@ class HARInference(
      */
     private fun processPredictionWithSmoothing(prediction: Pair<String, Float>) {
         synchronized(recentPredictions) {
-            // 1. 更新预测队列
-            if (recentPredictions.size >= smoothWindowSize) {
+            if (recentPredictions.size >= resampleConfig.smoothWindowSize) {
                 recentPredictions.removeFirst()
             }
             recentPredictions.addLast(prediction)
-            
+
             // 2. 按活动类型分组并计算平均置信度
             val predictions = recentPredictions.groupBy { it.first }
-                .mapValues { (_, values) -> 
+                .mapValues { (_, values) ->
                     values.map { it.second }.average()
                 }
-            
+
             // 3. 找出最频繁且置信度最高的活动
             // 评分 = 平均置信度 * (出现次数/窗口大小)
-            val smoothedPrediction = predictions.maxByOrNull { (activity, confidence) -> 
-                confidence * recentPredictions.count { it.first == activity }.toFloat() / recentPredictions.size 
+            val smoothedPrediction = predictions.maxByOrNull { (activity, confidence) ->
+                confidence * recentPredictions.count { it.first == activity }.toFloat() / recentPredictions.size
             }
-            
+
             // 4. 输出平滑后的结果
             smoothedPrediction?.let { (activity, confidence) ->
                 callback.onActivityRecognized(activity, confidence.toFloat())
@@ -424,44 +441,44 @@ class HARInference(
         )
 
         Log.d(TAG, "Acc resampling: span=${timeSpanNs/1e6}ms, points=$targetPoints")
-        
+
         val sortedAcc = accList.sortedBy { it.timestamp }
         val startTime = sortedAcc.first().timestamp
         val endTime = sortedAcc.last().timestamp
-        
+
         // 确保不超过窗口大小
         val numPoints = minOf(targetPoints, windowSize)
         val dtNs = timeSpanNs / (numPoints - 1)  // 实际采样间隔
-        
+
         val result = mutableListOf<AccData>()
         var t = startTime
         var idx = 0
-        
+
         // 生成固定数量的点
         repeat(numPoints) {
             // 找到合适的插值区间
             while (idx < sortedAcc.size - 1 && sortedAcc[idx + 1].timestamp < t) {
                 idx++
             }
-            
+
             if (idx >= sortedAcc.size - 1) {
                 // 使用最后两个点插值
                 idx = sortedAcc.size - 2
             }
-            
+
             val d1 = sortedAcc[idx]
             val d2 = sortedAcc[idx + 1]
             val ratio = (t - d1.timestamp).toDouble() / (d2.timestamp - d1.timestamp)
-            
+
             // 线性插值
             val x = d1.x + (d2.x - d1.x) * ratio.toFloat()
             val y = d1.y + (d2.y - d1.y) * ratio.toFloat()
             val z = d1.z + (d2.z - d1.z) * ratio.toFloat()
-            
+
             result.add(AccData(t, x, y, z))
             t += dtNs
         }
-        
+
         return result
     }
 
@@ -478,44 +495,44 @@ class HARInference(
         )
 
         Log.d(TAG, "Gyro resampling: span=${timeSpanNs/1e6}ms, points=$targetPoints")
-        
+
         val sortedGyro = gyroList.sortedBy { it.timestamp }
         val startTime = sortedGyro.first().timestamp
         val endTime = sortedGyro.last().timestamp
-        
+
         // 确保不超过窗口大小
         val numPoints = minOf(targetPoints, windowSize)
         val dtNs = timeSpanNs / (numPoints - 1)  // 实际采样间隔
-        
+
         val result = mutableListOf<GyroData>()
         var t = startTime
         var idx = 0
-        
+
         // 生成固定数量的点
         repeat(numPoints) {
             // 找到合适的插值区间
             while (idx < sortedGyro.size - 1 && sortedGyro[idx + 1].timestamp < t) {
                 idx++
             }
-            
+
             if (idx >= sortedGyro.size - 1) {
                 // 使用最后两个点插值
                 idx = sortedGyro.size - 2
             }
-            
+
             val d1 = sortedGyro[idx]
             val d2 = sortedGyro[idx + 1]
             val ratio = (t - d1.timestamp).toDouble() / (d2.timestamp - d1.timestamp)
-            
+
             // 线性插值
             val x = d1.x + (d2.x - d1.x) * ratio.toFloat()
             val y = d1.y + (d2.y - d1.y) * ratio.toFloat()
             val z = d1.z + (d2.z - d1.z) * ratio.toFloat()
-            
+
             result.add(GyroData(t, x, y, z))
             t += dtNs
         }
-        
+
         return result
     }
 
@@ -537,51 +554,33 @@ class HARInference(
         while (i < accList.size && j < gyroList.size) {
             val a = accList[i]
             val g = gyroList[j]
-            // 如果超过endTime就break
-            if (a.timestamp > endTime || g.timestamp > endTime) break
-            // 如果还在startTime之前,往前走
-            if (a.timestamp < startTime) {
-                i++
-                continue
-            }
-            if (g.timestamp < startTime) {
-                j++
+
+            // 添加时间差阈值检查（5ms）
+            val timeDiff = abs(a.timestamp - g.timestamp)
+            if (timeDiff > 5_000_000L) { // 5ms in nanoseconds
+                when {
+                    a.timestamp < g.timestamp -> {
+                        Log.w(TAG, "Large time gap: acc=${a.timestamp}ns gyro=${g.timestamp}ns (diff=${timeDiff/1e6}ms)")
+                        i++
+                    }
+                    else -> {
+                        Log.w(TAG, "Large time gap: gyro=${g.timestamp}ns acc=${a.timestamp}ns (diff=${timeDiff/1e6}ms)")
+                        j++
+                    }
+                }
                 continue
             }
 
-            // 如果 a.timestamp == g.timestamp => perfect match
-            // 如果 a.timestamp < g.timestamp => 以a为准
-            // 如果 a.timestamp > g.timestamp => 以g为准
-            if (a.timestamp == g.timestamp) {
-                merged.add(
-                    SensorDataAll(
-                        timestamp = a.timestamp,
-                        accX = a.x, accY = a.y, accZ = a.z,
-                        gyroX = g.x, gyroY = g.y, gyroZ = g.z
-                    )
+            // 修改合并策略：取两者时间戳的平均值
+            val mergedTimestamp = (a.timestamp + g.timestamp) / 2
+            merged.add(
+                SensorDataAll(
+                    timestamp = mergedTimestamp,
+                    accX = a.x, accY = a.y, accZ = a.z,
+                    gyroX = g.x, gyroY = g.y, gyroZ = g.z
                 )
-                i++; j++
-            } else if (a.timestamp < g.timestamp) {
-                // a在前 => 生成一条, 但陀螺仪用当前g
-                merged.add(
-                    SensorDataAll(
-                        timestamp = a.timestamp,
-                        accX = a.x, accY = a.y, accZ = a.z,
-                        gyroX = g.x, gyroY = g.y, gyroZ = g.z
-                    )
-                )
-                i++
-            } else {
-                // g在前
-                merged.add(
-                    SensorDataAll(
-                        timestamp = g.timestamp,
-                        accX = a.x, accY = a.y, accZ = a.z,
-                        gyroX = g.x, gyroY = g.y, gyroZ = g.z
-                    )
-                )
-                j++
-            }
+            )
+            i++; j++
         }
         return merged
     }
@@ -603,18 +602,61 @@ class HARInference(
         try {
             val jsonStr = context.assets.open(fileName).bufferedReader().use { it.readText() }
             val jsonObj = JSONObject(jsonStr)
-            val params = jsonObj.getJSONObject("parameters")
-            accMean  = params.optDouble("mean_acc", 0.0).toFloat()
-            accStd   = params.optDouble("std_acc", 1.0).toFloat()
-            gyroMean = params.optDouble("mean_gyro", 0.0).toFloat()
-            gyroStd  = params.optDouble("std_gyro", 1.0).toFloat()
-            Log.i(TAG, "Preproc loaded. accMean=$accMean accStd=$accStd, gyroMean=$gyroMean gyroStd=$gyroStd")
+            val sensors = jsonObj.getJSONObject("sensors")
+            val accParams = sensors.getJSONObject("acceleration")
+            val gyroParams = sensors.getJSONObject("gyroscope")
+
+            // 分轴加载参数（直接赋值给类成员变量）
+            this.accMeanX = accParams.getJSONObject("x").getDouble("mean").toFloat()
+            this.accStdX = accParams.getJSONObject("x").getDouble("std").toFloat()
+            this.accMeanY = accParams.getJSONObject("y").getDouble("mean").toFloat()
+            this.accStdY = accParams.getJSONObject("y").getDouble("std").toFloat()
+            this.accMeanZ = accParams.getJSONObject("z").getDouble("mean").toFloat()
+            this.accStdZ = accParams.getJSONObject("z").getDouble("std").toFloat()
+
+            this.gyroMeanX = gyroParams.getJSONObject("x").getDouble("mean").toFloat()
+            this.gyroStdX = gyroParams.getJSONObject("x").getDouble("std").toFloat()
+            this.gyroMeanY = gyroParams.getJSONObject("y").getDouble("mean").toFloat()
+            this.gyroStdY = gyroParams.getJSONObject("y").getDouble("std").toFloat()
+            this.gyroMeanZ = gyroParams.getJSONObject("z").getDouble("mean").toFloat()
+            this.gyroStdZ = gyroParams.getJSONObject("z").getDouble("std").toFloat()
+
+            val isRealWorld = dataSetName.equals("realworld", ignoreCase = true)
+            val accUnitScale = if (isRealWorld) 9.80665f else 1f
+            val gyroUnitScale = if (isRealWorld) (Math.PI/180).toFloat() else 1f
+
+            // 直接操作类成员变量
+            this.accMeanX *= accUnitScale
+            this.accStdX *= accUnitScale
+            this.accMeanY *= accUnitScale
+            this.accStdY *= accUnitScale
+            this.accMeanZ *= accUnitScale
+            this.accStdZ *= accUnitScale
+            this.gyroMeanX *= gyroUnitScale
+            this.gyroStdX *= gyroUnitScale
+            this.gyroMeanY *= gyroUnitScale
+            this.gyroStdY *= gyroUnitScale
+            this.gyroMeanZ *= gyroUnitScale
+            this.gyroStdZ *= gyroUnitScale
+
+            Log.i(TAG, """
+                |Loaded preprocessing params:
+                |Acc X: mean=${"%.3f".format(this.accMeanX)}, std=${"%.3f".format(this.accStdX)}
+                |Acc Y: mean=${"%.3f".format(this.accMeanY)}, std=${"%.3f".format(this.accStdY)}
+                |Acc Z: mean=${"%.3f".format(this.accMeanZ)}, std=${"%.3f".format(this.accStdZ)}
+                |Gyro X: mean=${"%.3f".format(this.gyroMeanX)}, std=${"%.3f".format(this.gyroStdX)}
+                |Gyro Y: mean=${"%.3f".format(this.gyroMeanY)}, std=${"%.3f".format(this.gyroStdY)}
+                |Gyro Z: mean=${"%.3f".format(this.gyroMeanZ)}, std=${"%.3f".format(this.gyroStdZ)}
+            """.trimMargin())
         } catch (ex: Exception) {
-            Log.w(TAG, "Failed to load preprocess JSON, use default 0/1", ex)
-            accMean = 0f
-            accStd  = 1f
-            gyroMean = 0f
-            gyroStd  = 1f
+            Log.w(TAG, "Failed to load preprocess params, using identity normalization", ex)
+            // 初始化各轴默认参数
+            this.accMeanX = 0f; this.accStdX = 1f
+            this.accMeanY = 0f; this.accStdY = 1f
+            this.accMeanZ = 0f; this.accStdZ = 1f
+            this.gyroMeanX = 0f; this.gyroStdX = 1f
+            this.gyroMeanY = 0f; this.gyroStdY = 1f
+            this.gyroMeanZ = 0f; this.gyroStdZ = 1f
         }
     }
 }

@@ -310,24 +310,35 @@ else:
 # Calculate and save preprocessing parameters
 try:
     print("\nCalculating preprocessing parameters...")
-    # 计算统计值
-    accMean = np.mean(centralTrainData[:,:,0:3])
-    accStd = np.std(centralTrainData[:,:,0:3])
-    gyroMean = np.mean(centralTrainData[:,:,3:6])
-    gyroStd = np.std(centralTrainData[:,:,3:6])
+    # 计算每个传感器轴的独立参数
+    acc_mean = np.mean(centralTrainData[:,:,0:3], axis=(0,1))  # 形状 (3,)
+    acc_std = np.std(centralTrainData[:,:,0:3], axis=(0,1))
+    gyro_mean = np.mean(centralTrainData[:,:,3:6], axis=(0,1))
+    gyro_std = np.std(centralTrainData[:,:,3:6], axis=(0,1))
+
+    # 添加数值稳定性保护
+    acc_std = np.where(acc_std < 1e-7, 1.0, acc_std)
+    gyro_std = np.where(gyro_std < 1e-7, 1.0, gyro_std)
 
     # 准备参数
     preprocessing_params = {
         'dataset': dataSetName,
-        'parameters': {
-            'mean_acc': float(accMean),
-            'std_acc': float(accStd),
-            'mean_gyro': float(gyroMean),
-            'std_gyro': float(gyroStd)
+        'sensors': {
+            'acceleration': {
+                'x': {'mean': float(acc_mean[0]), 'std': float(acc_std[0])},
+                'y': {'mean': float(acc_mean[1]), 'std': float(acc_std[1])},
+                'z': {'mean': float(acc_mean[2]), 'std': float(acc_std[2])}
+            },
+            'gyroscope': {
+                'x': {'mean': float(gyro_mean[0]), 'std': float(gyro_std[0])},
+                'y': {'mean': float(gyro_mean[1]), 'std': float(gyro_std[1])},
+                'z': {'mean': float(gyro_mean[2]), 'std': float(gyro_std[2])}
+            }
         },
-        'shape': {
+        'metadata': {
             'window_size': segment_size,
-            'num_channels': num_input_channels
+            'channels': num_input_channels,
+            'calculated_at': time.strftime("%Y-%m-%d %H:%M:%S")
         }
     }
 
@@ -344,8 +355,10 @@ try:
 
     # 使用这些参数标准化训练数据
     print("Normalizing training data...")
-    centralTrainData[:,:,0:3] = (centralTrainData[:,:,0:3] - accMean) / accStd
-    centralTrainData[:,:,3:6] = (centralTrainData[:,:,3:6] - gyroMean) / gyroStd
+    for i in range(3):
+        centralTrainData[:,:,i] = (centralTrainData[:,:,i] - acc_mean[i]) / acc_std[i]
+    for i in range(3,6):
+        centralTrainData[:,:,i] = (centralTrainData[:,:,i] - gyro_mean[i-3]) / gyro_std[i-3]
 
 except Exception as e:
     print(f"Error in preprocessing: {e}")
