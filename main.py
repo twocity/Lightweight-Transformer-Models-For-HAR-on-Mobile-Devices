@@ -139,6 +139,10 @@ def add_fit_args(parser):
                 help='Patch Size')  
     parser.add_argument('--time_step', type=int, default=timeStep, 
             help='Stride Size')  
+    parser.add_argument('--learning_rate', type=float, default=learningRate,
+            help='Initial learning rate')
+    parser.add_argument('--dropout_rate', type=float, default=dropout_rate,
+            help='Dropout rate for model regularization')
     parser.add_argument('--dataset', type=str, default=dataSetName, 
         help='Dataset')  
     parser.add_argument('--tokenBased', type=bool, default=tokenBased, 
@@ -215,6 +219,8 @@ if not is_interactive():
     projection_dim = args.projection_dim
     frameLength = args.frame_length
     timeStep = args.time_step
+    learningRate = args.learning_rate
+    dropout_rate = args.dropout_rate
     dataSetName = args.dataset
     tokenBased = args.tokenBased
     positionDevice = args.positionDevice
