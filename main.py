@@ -83,7 +83,7 @@ segment_size = 128
 # input channel count
 num_input_channels = 6
 
-learningRate = 5e-3
+learningRate = 1e-4
 
 # model drop out rate
 dropout_rate = 0.3
@@ -389,7 +389,10 @@ centralDevLabel = tf.one_hot(
 # In[ ]:
 
 
-optimizer = tf.keras.optimizers.Adam(learningRate)
+optimizer = tf.keras.optimizers.Adam(
+    learning_rate=learningRate,
+    clipvalue=0.5  # 将每个梯度元素裁剪到[-0.5, 0.5]区间
+)
 
 if(architecture == "HART"):
     model_classifier = model.HART(input_shape,activityCount)

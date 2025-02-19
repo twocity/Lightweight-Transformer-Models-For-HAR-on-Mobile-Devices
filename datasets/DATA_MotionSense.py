@@ -190,6 +190,11 @@ accStd =  np.std(combinedAccData)
 gyroMean =  np.mean(combinedGyroData)
 gyroStd =  np.std(combinedGyroData)
 
+# Add logging for standardization parameters
+print("\nMotionSense Dataset Standardization Parameters:")
+print(f"Accelerometer - Mean: {accMean:.6f}, Std: {accStd:.6f}")
+print(f"Gyroscope     - Mean: {gyroMean:.6f}, Std: {gyroStd:.6f}")
+
 
 # In[ ]:
 

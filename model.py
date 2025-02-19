@@ -312,19 +312,19 @@ class mixAccGyro(layers.Layer):
 
 def mlp(x, hidden_units, dropout_rate):
     for units in hidden_units:
-        x = layers.Dense(units, activation=tf.nn.swish)(x)
+        x = layers.Dense(units, activation=tf.keras.activations.swish)(x)
         x = layers.Dropout(dropout_rate)(x)
     return x
 
 def mlp2(x, hidden_units, dropout_rate):
-    x = layers.Dense(hidden_units[0],activation=tf.nn.swish)(x)
+    x = layers.Dense(hidden_units[0],activation=tf.keras.activations.swish)(x)
     x = layers.Dropout(dropout_rate)(x)
     x = layers.Dense(hidden_units[1])(x)
     return x
 
 def depthMLP(x, hidden_units, dropout_rate):
     x = layers.Dense(hidden_units[0])(x)
-    x = layers.DepthwiseConv1D(3,data_format='channels_first',activation=tf.nn.swish)(x)
+    x = layers.DepthwiseConv1D(3,data_format='channels_first',activation=tf.keras.activations.swish)(x)
     x = layers.Dropout(dropout_rate)(x)
     x = layers.Dense(hidden_units[1])(x)
     x = layers.Dropout(dropout_rate)(x)
@@ -495,14 +495,14 @@ def HART(input_shape,activityCount, projection_dim = 192,patchSize = 16,timeStep
 
 def conv_block(x, filters=16, kernel_size=3, strides=2):
     conv_layer = layers.Conv1D(
-        filters, kernel_size, strides=strides, activation=tf.nn.swish, padding="same"
+        filters, kernel_size, strides=strides, activation=tf.keras.activations.swish, padding="same"
     )
     return conv_layer(x)
 
 def inverted_residual_block(x, expanded_channels, output_channels, strides=1):
     m = layers.Conv1D(expanded_channels, 1, padding="same", use_bias=False)(x)
     m = layers.BatchNormalization()(m)
-    m = tf.nn.swish(m)
+    m = layers.Activation('swish')(m)
 
     if strides == 2:
         m = layers.ZeroPadding1D(padding=1)(m)
@@ -510,7 +510,7 @@ def inverted_residual_block(x, expanded_channels, output_channels, strides=1):
         3, strides=strides, padding="same" if strides == 1 else "valid", use_bias=False
     )(m)
     m = layers.BatchNormalization()(m)
-    m = tf.nn.swish(m)
+    m = layers.Activation('swish')(m)
 
     m = layers.Conv1D(output_channels, 1, padding="same", use_bias=False)(m)
     m = layers.BatchNormalization()(m)
@@ -680,7 +680,7 @@ def mobileHART_XS(input_shape,activityCount,projectionDims = [96,120,144],filter
     gyroX = mv2Block(gyroX,expansion_factor,filterCount)
     accX, gyroX  = sensorWiseHART(accX,gyroX, num_blocks=2, projection_dim=projectionDims[0])
     x = layers.Concatenate(axis=2)((accX,gyroX))    
-    x = layers.Dense(projectionDims[0],activation=tf.nn.swish)(x)
+    x = layers.Dense(projectionDims[0], activation='swish')(x)
     x = layers.Dropout(dropout_rate)(x)
 
     # Second MV2 -> MobileViT block.
@@ -716,7 +716,7 @@ def mobileHART_XXS(input_shape,activityCount,projectionDims = [64,80,96],filterC
     gyroX = mv2Block(gyroX,expansion_factor,filterCount)
     accX, gyroX  = sensorWiseHART(accX,gyroX, num_blocks=2, projection_dim=projectionDims[0])
     x = layers.Concatenate(axis=2)((accX,gyroX))    
-    x = layers.Dense(projectionDims[0],activation=tf.nn.swish)(x)
+    x = layers.Dense(projectionDims[0], activation='swish')(x)
     x = layers.Dropout(dropout_rate)(x)
 
     # Second MV2 -> MobileViT block.

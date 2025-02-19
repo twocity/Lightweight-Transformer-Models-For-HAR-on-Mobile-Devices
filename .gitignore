@@ -1,0 +1,43 @@
+# 数据集文件
+datasets/.DS_Store
+.DS_Store
+HART_Results/
+datasets/raw/
+dataset/
+datasets/datasetStandardized/
+datasets/mhealth_raw_data.csv
+datasetStandardized/
+*.hkl
+*.h5
+*.tflite
+
+# 模型文件
+*.weights
+*.model
+mobile_models/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+hart_env/
+venv/
+ENV/ 

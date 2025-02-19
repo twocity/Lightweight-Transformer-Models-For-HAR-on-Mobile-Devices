@@ -154,6 +154,11 @@ meanGyro = np.mean(combinedData[:,:,3:])
 stdGyro = np.std(combinedData[:,:,3:])
 varGyro = np.var(combinedData[:,:,3:])
 
+# Add logging for standardization parameters
+print("\nStandardization Parameters:")
+print(f"Accelerometer - Mean: {meanAcc:.6f}, Std: {stdAcc:.6f}")
+print(f"Gyroscope     - Mean: {meanGyro:.6f}, Std: {stdGyro:.6f}")
+
 normalizedAllAcc = (combinedData[:,:,:3] - meanAcc) / stdAcc
 normalizedAllGyro = (combinedData[:,:,3:] - meanGyro) / stdGyro
 normalizedAll = np.dstack((normalizedAllAcc,normalizedAllGyro))
