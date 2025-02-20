@@ -299,6 +299,11 @@ meanGyro = np.mean(allGyro)
 stdGyro = np.std(allGyro)
 
 
+# Add logging for standardization parameters
+print("\nStandardization Parameters:")
+print(f"Accelerometer - Mean: {meanAcc:.6f}, Std: {stdAcc:.6f}")
+print(f"Gyroscope     - Mean: {meanGyro:.6f}, Std: {stdGyro:.6f}")
+
 # In[ ]:
 
 

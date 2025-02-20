@@ -10,6 +10,7 @@ datasetStandardized/
 *.hkl
 *.h5
 *.tflite
+har_env/
 
 # 模型文件
 *.weights
